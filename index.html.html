@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Place an order</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --ink:#1b1f24; --muted:#5c6773; --line:#d9dee4; --brand:#1f4e78; --ok:#1b7f3b; --err:#b3261e; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#14171a; --card:#1d2227; --ink:#eef1f4; --muted:#9aa5b1; --line:#323a42; --brand:#6aa9e0; --ok:#5ccb83; --err:#ff8a80; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: Arial, Helvetica, sans-serif; background:var(--bg); color:var(--ink); }
+  main { max-width: 520px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 1.4rem; margin: 8px 0 16px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; margin-bottom:14px; }
+  label { display:block; font-size:.85rem; color:var(--muted); margin:12px 0 4px; }
+  input, select { width:100%; padding:12px; font-size:1rem; border:1px solid var(--line); border-radius:8px; background:var(--card); color:var(--ink); }
+  .prod { display:flex; align-items:center; gap:10px; padding:10px 0; border-bottom:1px solid var(--line); }
+  .prod:last-child { border-bottom:0; }
+  .prod .n { flex:1; } .prod .n small { display:block; color:var(--muted); }
+  .prod input { width:80px; text-align:center; }
+  .total { display:flex; justify-content:space-between; font-weight:bold; font-size:1.1rem; }
+  button { width:100%; padding:14px; font-size:1rem; font-weight:bold; border:0; border-radius:10px; background:var(--brand); color:#fff; cursor:pointer; }
+  button:disabled { opacity:.6; }
+  .msg { padding:12px; border-radius:8px; margin-top:12px; display:none; }
+  .msg.err { display:block; color:var(--err); border:1px solid var(--err); }
+  .msg.ok { display:block; color:var(--ok); border:1px solid var(--ok); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Place an order</h1>
+  <form id="f" novalidate>
+    <div class="card">
+      <label for="name">Your name</label>
+      <input id="name" autocomplete="name" maxlength="60">
+      <label for="phone">Phone number</label>
+      <input id="phone" type="tel" inputmode="tel" autocomplete="tel" placeholder="0712345678">
+      <label for="area">Delivery area</label>
+      <select id="area"><option value="">Choose area</option></select>
+      <label for="landmark">Landmark or house description</label>
+      <input id="landmark" maxlength="120" placeholder="e.g. jujasquare, containers">
+    </div>
+    <div class="card" id="products"><div style="color:var(--muted)">Loading products...</div></div>
+    <div class="card total"><span>Total</span><span id="total">KSh 0</span></div>
+    <button id="go" type="submit">Send order</button>
+    <div id="msg" class="msg" role="status"></div>
+  </form>
+</main>
+<script>
+// 1) Paste your Apps Script Web app URL here (ends in /exec)
+const API_URL = "https://script.google.com/macros/s/AKfycbw94Uu4TRKBtjRimGqbJWQzxWwEKxxXfjgcZi15yhCsaLlyqpOH5IVYUtPoPY1Telwk0A/exec";
+
+// Used only if the sheet cannot be reached, so the form still shows. Prices are re-checked by the server.
+const FALLBACK = {
+  products: [{id:"P1",name:"Shash",price:50},{id:"P2",name:"Lemon Haze",price:80},{id:"P3",name:"Cookies",price:100}],
+  areas: [{id:"GA",name:"Gate A"},{id:"GB",name:"Gate B"},{id:"GC",name:"Gate C"},{id:"GSH",name:"Gashororo"}]
+};
+
+let cfg = FALLBACK;
+const $ = id => document.getElementById(id);
+
+function show(text, kind) { const m = $("msg"); m.textContent = text; m.className = "msg " + kind; }
+
+function render() {
+  const a = $("area");
+  cfg.areas.forEach(x => { const o = document.createElement("option"); o.value = x.id; o.textContent = x.name; a.appendChild(o); });
+  const box = $("products"); box.textContent = "";
+  cfg.products.forEach(p => {
+    const row = document.createElement("div"); row.className = "prod";
+    const n = document.createElement("div"); n.className = "n";
+    n.textContent = p.name;
+    const s = document.createElement("small"); s.textContent = "KSh " + p.price; n.appendChild(s);
+    const q = document.createElement("input");
+    q.type = "number"; q.min = "0"; q.max = "50"; q.value = "0"; q.inputMode = "numeric"; q.dataset.id = p.id;
+    q.setAttribute("aria-label", "Quantity of " + p.name);
+    q.addEventListener("input", updateTotal);
+    row.append(n, q); box.appendChild(row);
+  });
+  updateTotal();
+}
+
+function getItems() {
+  return [...document.querySelectorAll("#products input")]
+    .map(i => ({product_id: i.dataset.id, quantity: Math.floor(Number(i.value) || 0)}))
+    .filter(i => i.quantity > 0);
+}
+
+function updateTotal() {
+  let t = 0;
+  getItems().forEach(i => { t += i.quantity * cfg.products.find(p => p.id === i.product_id).price; });
+  $("total").textContent = "KSh " + t.toLocaleString();
+}
+
+async function load() {
+  if (API_URL.startsWith("PASTE")) { render(); show("Setup needed: add your Web app URL in order_form.html (API_URL).", "err"); return; }
+  try {
+    const r = await fetch(API_URL + "?action=config");
+    const d = await r.json();
+    if (d.ok) cfg = d;
+  } catch (e) { /* keep fallback */ }
+  render();
+}
+
+$("f").addEventListener("submit", async ev => {
+  ev.preventDefault();
+  if (API_URL.startsWith("PASTE")) return show("Setup needed: add your Web app URL first.", "err");
+  const items = getItems();
+  if (!$("name").value.trim()) return show("Please enter your name.", "err");
+  if (!/^(\+?254|0)[17]\d{8}$/.test($("phone").value.replace(/\s+/g, ""))) return show("Enter a valid Kenyan phone number, e.g. 0712345678.", "err");
+  if (!$("area").value) return show("Please choose your area.", "err");
+  if (!items.length) return show("Add at least one product.", "err");
+
+  $("go").disabled = true; show("Sending...", "ok");
+  try {
+    const r = await fetch(API_URL, {
+      method: "POST",
+      headers: {"Content-Type": "text/plain;charset=utf-8"},   // avoids a CORS preflight with Apps Script
+      body: JSON.stringify({
+        action: "order", client_name: $("name").value, client_phone: $("phone").value,
+        area_id: $("area").value, landmark: $("landmark").value, items: items
+      })
+    });
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error || "Order failed");
+    show("Order " + d.order_id + " received. Total KSh " + d.total + ". " + d.distributor + " will deliver to " + d.area + ".", "ok");
+    $("f").reset(); updateTotal();
+  } catch (e) {
+    show("Could not send: " + e.message, "err");
+  } finally { $("go").disabled = false; }
+});
+
+load();
+</script>
+</body>
+</html>

@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Distributor orders</title>
+<style>
+  :root { --bg:#f6f7f9; --card:#fff; --ink:#1b1f24; --muted:#5c6773; --line:#d9dee4; --brand:#1f4e78; --err:#b3261e; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#14171a; --card:#1d2227; --ink:#eef1f4; --muted:#9aa5b1; --line:#323a42; --brand:#6aa9e0; --err:#ff8a80; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: Arial, Helvetica, sans-serif; background:var(--bg); color:var(--ink); }
+  main { max-width: 640px; margin: 0 auto; padding: 16px; }
+  h1 { font-size:1.4rem; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px; margin-bottom:12px; }
+  select, input { width:100%; padding:11px; font-size:1rem; border:1px solid var(--line); border-radius:8px; background:var(--card); color:var(--ink); margin-bottom:8px; }
+  button { padding:10px 14px; font-size:.95rem; font-weight:bold; border:0; border-radius:8px; background:var(--brand); color:#fff; cursor:pointer; margin:6px 6px 0 0; }
+  button.sec { background:transparent; color:var(--ink); border:1px solid var(--line); }
+  .top { display:flex; justify-content:space-between; gap:8px; }
+  .st { font-weight:bold; }
+  .muted { color:var(--muted); font-size:.9rem; }
+  #err { color:var(--err); margin:8px 0; }
+</style>
+</head>
+<body>
+<main>
+  <h1>My orders</h1>
+  <div class="card">
+    <select id="dist" aria-label="Distributor"></select>
+    <input id="key" type="password" placeholder="Distributor key" autocomplete="off">
+    <button id="load">Load orders</button>
+    <div id="err" role="alert"></div>
+  </div>
+  <div id="list"></div>
+</main>
+<script>
+const API_URL = "https://script.google.com/macros/s/AKfycbw94Uu4TRKBtjRimGqbJWQzxWwEKxxXfjgcZi15yhCsaLlyqpOH5IVYUtPoPY1Telwk0A/exec";   // same URL as in order_form.html
+const NEXT = {"New":["Accepted","Cancelled"],"Accepted":["Delivered","Cancelled"],"Delivered":["Paid"],"Paid":[],"Cancelled":[]};
+const $ = id => document.getElementById(id);
+const store = { get(k){ try { return sessionStorage.getItem(k) || ""; } catch(e){ return ""; } },
+                set(k,v){ try { sessionStorage.setItem(k,v); } catch(e){} } };
+
+function el(tag, text, cls) { const e = document.createElement(tag); if (text !== undefined) e.textContent = text; if (cls) e.className = cls; return e; }
+
+async function init() {
+  $("key").value = store.get("key");
+  let dists = [{id:"D1",name:"Yusuf"},{id:"D2",name:"Kruger"},{id:"D3",name:"Abushde"},{id:"D4",name:"Kama"}];
+  if (!API_URL.startsWith("PASTE")) {
+    try { const d = await (await fetch(API_URL + "?action=config")).json(); if (d.ok) dists = d.distributors; } catch(e) {}
+  }
+  dists.forEach(d => { const o = el("option", d.name); o.value = d.id; $("dist").appendChild(o); });
+  $("dist").value = store.get("dist") || dists[0].id;
+}
+
+async function loadOrders() {
+  $("err").textContent = "";
+  if (API_URL.startsWith("PASTE")) return $("err").textContent = "Setup needed: add the Web app URL in distributor.html.";
+  store.set("key", $("key").value); store.set("dist", $("dist").value);
+  try {
+    const u = API_URL + "?action=orders&distributor=" + encodeURIComponent($("dist").value) + "&key=" + encodeURIComponent($("key").value);
+    const d = await (await fetch(u)).json();
+    if (!d.ok) throw new Error(d.error);
+    draw(d.orders);
+  } catch (e) { $("err").textContent = e.message; }
+}
+
+function draw(orders) {
+  const list = $("list"); list.textContent = "";
+  if (!orders.length) { list.appendChild(el("div", "No orders yet.", "muted")); return; }
+  orders.forEach(o => {
+    const c = el("div", undefined, "card");
+    const top = el("div", undefined, "top");
+    top.append(el("strong", o.order_id), el("span", o.status, "st"));
+    c.appendChild(top);
+    c.appendChild(el("div", o.client_name + " | " + o.client_phone));
+    c.appendChild(el("div", o.area + (o.landmark ? " - " + o.landmark : ""), "muted"));
+    c.appendChild(el("div", o.items.map(i => i.quantity + " x " + i.name).join(", ")));
+    c.appendChild(el("div", "Total KSh " + o.total + " | " + o.time, "muted"));
+    const call = el("button", "Call", "sec");
+    call.addEventListener("click", () => { location.href = "tel:" + o.client_phone; });
+    c.appendChild(call);
+    (NEXT[o.status] || []).forEach(s => {
+      const b = el("button", "Mark " + s, s === "Cancelled" ? "sec" : "");
+      b.addEventListener("click", () => setStatus(o.order_id, s));
+      c.appendChild(b);
+    });
+    list.appendChild(c);
+  });
+}
+
+async function setStatus(id, status) {
+  $("err").textContent = "";
+  try {
+    const r = await fetch(API_URL, { method:"POST", headers:{"Content-Type":"text/plain;charset=utf-8"},
+      body: JSON.stringify({action:"status", order_id:id, status:status, distributor:$("dist").value, key:$("key").value}) });
+    const d = await r.json();
+    if (!d.ok) throw new Error(d.error);
+    loadOrders();
+  } catch (e) { $("err").textContent = e.message; }
+}
+
+$("load").addEventListener("click", loadOrders);
+init();
+</script>
+</body>
+</html>
